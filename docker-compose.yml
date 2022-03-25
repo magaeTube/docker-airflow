@@ -1,0 +1,152 @@
+version: '3'
+x-airflow-common:
+  &airflow-common
+  build:
+    context: ./
+  env_file:
+    - .env
+  user: "${AIRFLOW_UID:-50000}:${AIRFLOW_GID:-0}"
+  depends_on:
+    redis:
+      condition: service_healthy
+
+services:
+  redis:
+    image: redis:latest
+    container_name: airflow_redis
+    ports:
+      - 6379:6379
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 30s
+      retries: 50
+    restart: always
+    networks:
+      - airflow
+
+#  airflow-init:
+#    <<: *airflow-common
+#    container_name: airflow_init
+#    command: version
+#    env_file:
+#      - .env
+#    environment:
+#      _AIRFLOW_DB_UPGRADE: 'true'
+#      _AIRFLOW_WWW_USER_CREATE: 'true'
+#      _AIRFLOW_WWW_USER_USERNAME: ${_AIRFLOW_WWW_USER_USERNAME:-airflow}
+#      _AIRFLOW_WWW_USER_PASSWORD: ${_AIRFLOW_WWW_USER_PASSWORD:-airflow}
+
+  airflow-webserver:
+    <<: *airflow-common
+    container_name: airflow_webserver
+    command: webserver
+    volumes:
+      - ./config:/opt/airflow/config
+      - $HOME/.aws/credentials:/home/airflow/.aws/credentials:ro
+    ports:
+      - 8080:8080
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 10s
+      retries: 5
+    restart: always
+    networks:
+      - airflow
+
+  airflow-scheduler:
+    <<: *airflow-common
+    container_name: airflow_scheduler
+    command: scheduler
+    volumes:
+      - ./dags:/opt/airflow/dags
+      - ./config:/opt/airflow/config
+      - $HOME/.aws/credentials:/home/airflow/.aws/credentials:ro
+    healthcheck:
+      test: ["CMD-SHELL", 'airflow jobs check --job-type SchedulerJob --hostname "$${HOSTNAME}"']
+      interval: 10s
+      timeout: 10s
+      retries: 5
+    restart: always
+    networks:
+      - airflow
+
+  airflow-worker:
+    <<: *airflow-common
+    container_name: airflow_worker
+    hostname: worker
+    command: celery worker
+    volumes:
+      - ./dags:/opt/airflow/dags
+      - ./config:/opt/airflow/config
+      - $HOME/.aws/credentials:/home/airflow/.aws/credentials:ro
+    healthcheck:
+      test:
+        - "CMD-SHELL"
+        - 'celery --app airflow.executors.celery_executor.app inspect ping -d "celery$${HOSTNAME}"'
+      interval: 10s
+      timeout: 10s
+      retries: 5
+    restart: always
+    networks:
+      - airflow
+
+  flower:
+    <<: *airflow-common
+    container_name: airflow_flower
+    command: celery flower
+    ports:
+      - 5555:5555
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:5555/"]
+      interval: 10s
+      timeout: 10s
+      retries: 5
+    restart: always
+    networks:
+      - airflow
+
+# Choose Statsd Exporter or Telegraf
+#  statsd-exporter:
+#    image: prom/statsd-exporter
+#    container_name: airflow_statsd_exporter
+#    command: "--statsd.listen-udp=:8125 --web.listen-address=:9102 --statsd.mapping-config=/tmp/statsd_mapping.conf"
+#    ports:
+#      - 9102:9102
+#      - 8125:8125/udp
+#    volumes:
+#      - ./statsd/statsd_mapping.conf:/tmp/statsd_mapping.conf
+#    restart: always
+#    networks:
+#      - airflow
+#
+#  node-exporter:
+#    container_name: node-exporter
+#    image: prom/node-exporter
+#    ports:
+#      - "9100:9100"
+#    restart: always
+#    networks:
+#      - airflow
+
+  telegraf:
+    image: telegraf
+    container_name: airflow_telegraf
+    restart: always
+    volumes:
+      - ./telegraf/telegraf.conf:/etc/telegraf/telegraf.conf
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      - DOCKER_INFLUXDB_INIT_ORG=
+      - DOCKER_INFLUXDB_INIT_BUCKET=
+      - DOCKER_INFLUXDB_INIT_ADMIN_TOKEN=
+      - HOST_NAME=
+    networks:
+      - airflow
+
+networks:
+  airflow:
+    driver: bridge
+    external: true
+    internal: true
