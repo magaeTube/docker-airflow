@@ -9,27 +9,22 @@ x-airflow-common:
   depends_on:
     redis:
       condition: service_healthy
-    mysql:
+    postgres:
       condition: service_healthy
 
 services:
-  mysql:
-    image: mysql:8.0.22
-    container_name: airflow_mysql
-    ports:
-      - 3306:3306
+  postgres:
+    image: postgres:13
     environment:
-      - MYSQL_USER=airflow
-      - MYSQL_PASSWORD=airflow
-      - MYSQL_DATABASE=airflow
-      #- MYSQL_ROOT_PASSWORD=password
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow
+      POSTGRES_DB: airflow
     volumes:
-      - ./mysql:/var/lib/mysql
+      - postgres-db-volume:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD", "mysqladmin" ,"ping", "-h", "localhost"]
+      test: [ "CMD", "pg_isready", "-U", "airflow" ]
       interval: 5s
-      timeout: 30s
-      retries: 50
+      retries: 5
     restart: always
     networks:
       - airflow
@@ -103,6 +98,8 @@ services:
     container_name: airflow_worker
     hostname: worker
     command: celery worker
+    ports:
+      - 8793:8793
     volumes:
       - ./dags:/opt/airflow/dags
     healthcheck:
@@ -160,23 +157,26 @@ services:
 #    networks:
 #      - airflow
 
-  telegraf:
-    image: telegraf
-    container_name: airflow_telegraf
-    restart: always
-    volumes:
-      - ./telegraf/telegraf.conf:/etc/telegraf/telegraf.conf
-      - /var/run/docker.sock:/var/run/docker.sock
-    environment:
-      - DOCKER_INFLUXDB_INIT_ORG=
-      - DOCKER_INFLUXDB_INIT_BUCKET=
-      - DOCKER_INFLUXDB_INIT_ADMIN_TOKEN=
-      - HOST_NAME=
-    networks:
-      - airflow
+#  telegraf:
+#    image: telegraf
+#    container_name: airflow_telegraf
+#    restart: always
+#    volumes:
+#      - ./telegraf/telegraf.conf:/etc/telegraf/telegraf.conf
+#      - /var/run/docker.sock:/var/run/docker.sock
+#    environment:
+#      - DOCKER_INFLUXDB_INIT_ORG=
+#      - DOCKER_INFLUXDB_INIT_BUCKET=
+#      - DOCKER_INFLUXDB_INIT_ADMIN_TOKEN=
+#      - HOST_NAME=
+#    networks:
+#      - airflow
 
 networks:
   airflow:
     driver: bridge
     external: true
     internal: true
+
+volumes:
+  postgres-db-volume:
